@@ -3,11 +3,11 @@
 use std::time::Instant;
 
 use objc2::rc::Retained;
-use objc2::{MainThreadMarker, MainThreadOnly};
+use objc2::runtime::AnyObject;
+use objc2::{sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSBackingStoreType, NSColor, NSEvent, NSEventType, NSFont, NSScreen,
-    NSTextAlignment, NSTextField, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
-    NSStatusWindowLevel,
+    NSBackingStoreType, NSButton, NSColor, NSFont, NSPanel, NSScreen, NSStatusWindowLevel,
+    NSTextAlignment, NSTextField, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
@@ -19,7 +19,7 @@ const TOP_MARGIN: f64 = 48.0;
 const GRACE_MS: u128 = 3000;
 
 pub struct BreakBanner {
-    windows: Vec<Retained<NSWindow>>,
+    windows: Vec<Retained<NSPanel>>,
     started: Option<Instant>,
     duration_secs: u32,
     countdown: bool,
@@ -39,7 +39,13 @@ impl BreakBanner {
         self.started.is_some()
     }
 
-    pub fn show(&mut self, mtm: MainThreadMarker, duration_secs: u32, countdown: bool) {
+    pub fn show(
+        &mut self,
+        mtm: MainThreadMarker,
+        duration_secs: u32,
+        countdown: bool,
+        target: &AnyObject,
+    ) {
         self.hide();
         self.duration_secs = duration_secs;
         self.countdown = countdown;
@@ -52,24 +58,27 @@ impl BreakBanner {
             let y = frame.origin.y + frame.size.height - TOP_MARGIN - BANNER_H;
             let rect = NSRect::new(NSPoint::new(x, y), NSSize::new(BANNER_W, BANNER_H));
 
-            let window = unsafe {
-                NSWindow::initWithContentRect_styleMask_backing_defer(
-                    NSWindow::alloc(mtm),
-                    rect,
-                    NSWindowStyleMask::Borderless,
-                    NSBackingStoreType::Buffered,
-                    false,
-                )
-            };
+            let window = NSPanel::initWithContentRect_styleMask_backing_defer(
+                NSPanel::alloc(mtm),
+                rect,
+                NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
+                NSBackingStoreType::Buffered,
+                false,
+            );
             let bg = NSColor::colorWithSRGBRed_green_blue_alpha(0.12, 0.12, 0.14, 0.92);
             window.setOpaque(false);
             window.setBackgroundColor(Some(&bg));
             window.setLevel(NSStatusWindowLevel + 1);
             window.setCollectionBehavior(
-                NSWindowCollectionBehavior::CanJoinAllSpaces | NSWindowCollectionBehavior::Stationary,
+                NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::Stationary
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary
+                    | NSWindowCollectionBehavior::FullScreenDisallowsTiling,
             );
             window.setHasShadow(true);
             window.setIgnoresMouseEvents(false);
+            window.setHidesOnDeactivate(false);
+            window.setBecomesKeyOnlyIfNeeded(true);
 
             let title = label(
                 mtm,
@@ -85,31 +94,52 @@ impl BreakBanner {
                 12.0,
                 false,
             );
-            let countdown_field = label(
-                mtm,
-                &format!("{duration_secs}s"),
-                NSRect::new(NSPoint::new(16.0, 8.0), NSSize::new(BANNER_W - 32.0, 18.0)),
-                12.0,
-                false,
-            );
-            countdown_field.setTag(1);
 
             if let Some(content) = window.contentView() {
                 content.addSubview(&title);
                 content.addSubview(&subtitle);
-                content.addSubview(&countdown_field);
             }
+
+            if countdown {
+                let countdown_field = label(
+                    mtm,
+                    &format!("{duration_secs}s"),
+                    NSRect::new(NSPoint::new(16.0, 8.0), NSSize::new(BANNER_W - 32.0, 18.0)),
+                    12.0,
+                    false,
+                );
+                countdown_field.setTag(1);
+                if let Some(content) = window.contentView() {
+                    content.addSubview(&countdown_field);
+                }
+            }
+
+            // Transparent full-size button added last so it sits on top and receives clicks.
+            let click_button = NSButton::new(mtm);
+            let local_rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(BANNER_W, BANNER_H));
+            click_button.setFrame(local_rect);
+            click_button.setTitle(&NSString::from_str(""));
+            click_button.setBordered(false);
+            click_button.setTransparent(true);
+            unsafe {
+                click_button.setTarget(Some(target));
+                click_button.setAction(Some(sel!(bannerClicked:)));
+            }
+            if let Some(content) = window.contentView() {
+                content.addSubview(&click_button);
+            }
+
             window.orderFrontRegardless();
             self.windows.push(window);
         }
     }
 
-    /// Returns true when the break has ended (timeout or click after grace).
-    pub fn tick(&mut self, mtm: MainThreadMarker) -> bool {
+    /// Returns true when the break has ended because of timeout.
+    /// Click dismissal is handled by [`BreakBanner::click`].
+    pub fn tick(&mut self) -> bool {
         let Some(start) = self.started else {
             return false;
         };
-        let elapsed_ms = start.elapsed().as_millis();
         let elapsed_s = start.elapsed().as_secs_f64();
         let remaining = (self.duration_secs as f64 - elapsed_s).ceil().max(0.0) as u32;
 
@@ -129,12 +159,27 @@ impl BreakBanner {
             }
         }
 
-        let clicked = elapsed_ms >= GRACE_MS && any_window_clicked(mtm, &self.windows);
-        if clicked || elapsed_s >= self.duration_secs as f64 {
+        if elapsed_s >= self.duration_secs as f64 {
             self.hide();
             return true;
         }
         false
+    }
+
+    /// Pure grace-period check: returns true only if the 3s grace has passed.
+    pub fn grace_elapsed(&self) -> bool {
+        self.started
+            .is_some_and(|s| s.elapsed().as_millis() >= GRACE_MS)
+    }
+
+    /// Attempt to dismiss by click. Enforces the 3s grace period.
+    /// Returns true if the banner was dismissed.
+    pub fn click(&mut self) -> bool {
+        if !self.grace_elapsed() {
+            return false;
+        }
+        self.hide();
+        true
     }
 
     pub fn hide(&mut self) {
@@ -144,25 +189,6 @@ impl BreakBanner {
         }
         self.started = None;
     }
-}
-
-fn any_window_clicked(mtm: MainThreadMarker, windows: &[Retained<NSWindow>]) -> bool {
-    let app = NSApplication::sharedApplication(mtm);
-    let Some(event) = app.currentEvent() else {
-        return false;
-    };
-    let ty = event.r#type();
-    if ty != NSEventType::LeftMouseDown && ty != NSEventType::LeftMouseUp {
-        return false;
-    }
-    let loc = NSEvent::mouseLocation();
-    windows.iter().any(|w| {
-        let f = w.frame();
-        loc.x >= f.origin.x
-            && loc.x <= f.origin.x + f.size.width
-            && loc.y >= f.origin.y
-            && loc.y <= f.origin.y + f.size.height
-    })
 }
 
 fn label(
@@ -178,6 +204,7 @@ fn label(
     field.setDrawsBackground(false);
     field.setEditable(false);
     field.setSelectable(false);
+    field.setRefusesFirstResponder(true);
     field.setAlignment(NSTextAlignment::Left);
     field.setTextColor(Some(&NSColor::whiteColor()));
     let font = if bold {
@@ -187,4 +214,45 @@ fn label(
     };
     field.setFont(Some(&font));
     field
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn grace_blocks_early_click() {
+        let mut b = BreakBanner {
+            windows: Vec::new(),
+            started: Some(Instant::now()),
+            duration_secs: 20,
+            countdown: true,
+        };
+        assert!(!b.click());
+        assert!(!b.grace_elapsed());
+    }
+
+    #[test]
+    fn grace_allows_after_three_seconds() {
+        let mut b = BreakBanner {
+            windows: Vec::new(),
+            started: Some(Instant::now() - Duration::from_millis(3100)),
+            duration_secs: 20,
+            countdown: true,
+        };
+        assert!(b.grace_elapsed());
+        assert!(b.click());
+    }
+
+    #[test]
+    fn tick_times_out() {
+        let mut b = BreakBanner {
+            windows: Vec::new(),
+            started: Some(Instant::now() - Duration::from_secs(30)),
+            duration_secs: 1,
+            countdown: false,
+        };
+        assert!(b.tick());
+    }
 }

@@ -1,4 +1,4 @@
-# Blink!
+# Blink! v0.1.1
 
 Ambient blink cue and 20-20-20 eye-break reminder. A tiny peripheral pulse, not a notification app: no text on the glow, no sound, no focus steal.
 
@@ -14,18 +14,24 @@ Default: blink glow every ~30s (10% jitter), eye-break banner every 20 minutes.
 
 ### macOS
 
-**Release binary (Apple Silicon):**
+**Release binary (Apple Silicon, unsigned):**
 
 1. Open the latest GitHub Release.
 2. Download `blink-macos-aarch64`.
-3. In Terminal:
+3. In Terminal, install to a user-writable directory such as `~/.local/bin`:
 
 ```bash
+mkdir -p ~/.local/bin
 chmod +x ~/Downloads/blink-macos-aarch64
 xattr -dr com.apple.quarantine ~/Downloads/blink-macos-aarch64
-mv ~/Downloads/blink-macos-aarch64 /usr/local/bin/blink
+mv ~/Downloads/blink-macos-aarch64 ~/.local/bin/blink
+export PATH="$HOME/.local/bin:$PATH"
 blink
 ```
+
+Add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` (or `~/.bash_profile`) if you want it on every shell session.
+
+Because the binary is not signed or notarized, macOS may block it on first launch. Run it from Terminal, or right-click the binary in Finder and choose **Open**. If blocked, go to **System Settings > Privacy & Security** and allow it.
 
 Look for **◉** in the menu bar.
 
@@ -50,7 +56,7 @@ Needs a recent stable Rust (`rustup`). macOS only for this tree.
 | `blink.interval_secs` | `30` | Seconds between glow cues |
 | `blink.jitter` | `Pct10` | `Off` / `Pct5` / `Pct10` / `Pct20` |
 | `appearance.color` | `[167,139,250]` | RGB of the edge glow |
-| `appearance.intensity` | `140` | Peak alpha 0–255 |
+| `appearance.intensity` | `140` | Peak alpha 0-255 |
 | `appearance.thickness_px` | `35` | Edge strip depth |
 | `appearance.duration_ms` | `800` | Double-pulse length |
 | `eye_break.interval_secs` | `1200` | 20 minutes |
@@ -141,8 +147,8 @@ Do not commit `target/`. Do not add Electron, a webview, or a settings GUI unles
 
 - Cues are never queued. If a pulse is still animating, skip.
 - Scheduler is timing-only. Idle checks happen at fire time, not on their own timer.
-- Overlay windows: borderless, `ignoresMouseEvents`, `CanJoinAllSpaces`, hidden at rest (`alpha = 0`).
-- Blink poll is 1s and only fires when `due_in_ms() == Some(0)`. Do not call `on_timer_due()` on every tick.
+- Overlay windows: borderless, `ignoresMouseEvents`, `CanJoinAllSpaces | Stationary | IgnoresCycle | FullScreenAuxiliary | FullScreenDisallowsTiling`, hidden at rest (`alpha = 0`); do not repeatedly `orderFront`/`orderOut` when visibility has not changed.
+- Blink poll is 1s and fires when `poll_due()` returns true; `poll_due()` internally guards against early firing.
 - Login item path: `~/Library/LaunchAgents/com.blink.app.plist`, label `com.blink.app`.
 - Config dir: `~/Library/Application Support/Blink/`. Writes are temp + `sync_all` + rename.
 
@@ -155,7 +161,9 @@ Do not commit `target/`. Do not add Electron, a webview, or a settings GUI unles
 **Verify**
 
 ```bash
+cargo fmt
 cargo test
+cargo clippy --all-targets -- -D warnings
 cargo build --release
 # manual: launch, Show cue now, Take eye break now, Quit
 ```

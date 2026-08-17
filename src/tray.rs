@@ -4,7 +4,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+    NSControlStateValueOff, NSControlStateValueOn, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
+    NSVariableStatusItemLength,
 };
 use objc2_foundation::NSString;
 
@@ -13,6 +14,7 @@ pub struct Tray {
     pub pause_item: Retained<NSMenuItem>,
     pub blink_item: Retained<NSMenuItem>,
     pub break_item: Retained<NSMenuItem>,
+    pub login_item: Retained<NSMenuItem>,
 }
 
 impl Tray {
@@ -42,6 +44,7 @@ impl Tray {
         let blink = item_with(mtm, "Blink cues: On", sel!(toggleBlink:), target);
         let brk = item_with(mtm, "Eye breaks: On", sel!(toggleBreak:), target);
         let login = item_with(mtm, "Start at login", sel!(toggleLogin:), target);
+        login.setState(NSControlStateValueOff);
         menu.addItem(&blink);
         menu.addItem(&brk);
         menu.addItem(&login);
@@ -55,6 +58,7 @@ impl Tray {
             pause_item: pause,
             blink_item: blink,
             break_item: brk,
+            login_item: login,
         }
     }
 
@@ -83,6 +87,14 @@ impl Tray {
         } else {
             "Eye breaks: Off"
         }));
+    }
+
+    pub fn set_login_enabled(&self, on: bool) {
+        self.login_item.setState(if on {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
     }
 }
 

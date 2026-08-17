@@ -1,6 +1,6 @@
 [package]
 name = "blink"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Blink! ambient blink-conditioning and eye-break reminders (macOS)"
 license = "MIT"
@@ -26,6 +26,7 @@ objc2-foundation = { version = "0.3.2", features = [
     "NSTimer",
     "NSObject",
     "NSValue",
+    "NSNotification",
 ] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "objc2-core-foundation",
@@ -48,6 +49,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSControl",
     "NSCell",
     "NSButton",
+    "NSPanel",
     "NSRunningApplication",
 ] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = [

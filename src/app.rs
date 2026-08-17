@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::NSApplication;
-use objc2_foundation::{NSObject, NSObjectProtocol, NSTimer};
+use objc2_app_kit::{NSApplication, NSApplicationDidChangeScreenParametersNotification};
+use objc2_foundation::{NSNotificationCenter, NSObject, NSObjectProtocol, NSTimer};
 
 use crate::animation::{CueAnimation, DoubleEdgePulse};
 use crate::autostart;
@@ -43,11 +43,22 @@ struct ActiveCue {
 
 impl AppState {
     fn new(mtm: MainThreadMarker) -> Self {
-        let settings = settings::load();
+        let mut settings = settings::load();
+        match autostart::is_enabled() {
+            Ok(actual_login) if settings.behaviour.start_at_login != actual_login => {
+                settings.behaviour.start_at_login = actual_login;
+                if let Err(e) = settings::save(&settings) {
+                    eprintln!("Blink! settings save failed: {e}");
+                }
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("Blink! start-at-login probe failed: {e}"),
+        }
+
         let blink = IntervalScheduler::new(
             SchedulerConfig {
                 enabled: settings.blink.enabled,
-                base_interval: Duration::from_secs_f32(settings.blink.interval_secs.max(1.0)),
+                base_interval: Duration::from_secs_f32(settings.blink.interval_secs),
                 jitter: settings.blink.jitter,
             },
             Duration::from_secs(MIN_INTERVAL_SECS),
@@ -56,7 +67,7 @@ impl AppState {
         let eye_break = IntervalScheduler::new(
             SchedulerConfig {
                 enabled: settings.eye_break.enabled,
-                base_interval: Duration::from_secs_f32(settings.eye_break.interval_secs.max(60.0)),
+                base_interval: Duration::from_secs_f32(settings.eye_break.interval_secs),
                 jitter: crate::scheduler::Jitter::Off,
             },
             Duration::from_secs(break_timer::MIN_INTERVAL_SECS),
@@ -86,7 +97,21 @@ impl AppState {
     }
 
     fn persist(&self) {
-        let _ = settings::save(&self.settings);
+        if let Err(e) = settings::save(&self.settings) {
+            eprintln!("Blink! settings save failed: {e}");
+        }
+    }
+
+    fn sync_pause_ui(&self, mtm: MainThreadMarker) {
+        if let Some(tray) = &self.tray {
+            tray.set_paused(mtm, self.blink.is_paused());
+        }
+    }
+
+    fn sync_login_ui(&self) {
+        if let Some(tray) = &self.tray {
+            tray.set_login_enabled(self.settings.behaviour.start_at_login);
+        }
     }
 
     fn idle_blocked(&self) -> bool {
@@ -96,8 +121,43 @@ impl AppState {
         idle::seconds_since_input() >= self.settings.behaviour.idle_threshold_secs as f64
     }
 
+    fn schedule_frame_timer(&mut self) {
+        let Some(target) = self.target.as_ref() else {
+            return;
+        };
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                1.0 / 30.0,
+                target,
+                sel!(frameTick:),
+                None,
+                true,
+            )
+        };
+        self.frame_timer = Some(timer);
+    }
+
+    fn schedule_banner_timer(&mut self) {
+        let Some(target) = self.target.as_ref() else {
+            return;
+        };
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                0.2,
+                target,
+                sel!(bannerTick:),
+                None,
+                true,
+            )
+        };
+        self.banner_timer = Some(timer);
+    }
+
     fn show_cue(&mut self) {
         if self.cue.is_some() {
+            return;
+        }
+        if self.target.is_none() {
             return;
         }
         if self.idle_blocked() {
@@ -109,16 +169,16 @@ impl AppState {
             animation: anim,
             start: Instant::now(),
         });
-        if self.settings.statistics.enabled {
-            self.settings.statistics.blink_cues_shown += 1;
-            self.persist();
-        }
+        self.schedule_frame_timer();
     }
 
     fn show_break(&mut self, mtm: MainThreadMarker) {
         if self.banner.is_showing() {
             return;
         }
+        let Some(target) = self.target.as_ref() else {
+            return;
+        };
         if self.idle_blocked() {
             self.eye_break.reset_without_firing();
             return;
@@ -127,11 +187,9 @@ impl AppState {
             mtm,
             self.settings.eye_break.duration_secs,
             self.settings.eye_break.countdown_enabled,
+            target,
         );
-        if self.settings.statistics.enabled {
-            self.settings.statistics.eye_break_reminders_shown += 1;
-            self.persist();
-        }
+        self.schedule_banner_timer();
         self.eye_break.reset_without_firing();
     }
 
@@ -144,9 +202,28 @@ impl AppState {
         if elapsed >= cue.animation.total_duration_ms() {
             self.overlay.hide();
             self.cue = None;
+            if let Some(timer) = self.frame_timer.take() {
+                timer.invalidate();
+            }
             return;
         }
         self.overlay.set_opacity(cue.animation.opacity_at(elapsed));
+    }
+
+    fn banner_tick(&mut self) {
+        if self.banner.tick() {
+            if let Some(timer) = self.banner_timer.take() {
+                timer.invalidate();
+            }
+        }
+    }
+
+    fn banner_clicked(&mut self, _event: Option<&AnyObject>) {
+        if self.banner.click() {
+            if let Some(timer) = self.banner_timer.take() {
+                timer.invalidate();
+            }
+        }
     }
 }
 
@@ -177,24 +254,31 @@ define_class!(
 
         #[unsafe(method(pause15:))]
         fn pause15(&self, _sender: Option<&AnyObject>) {
+            let mtm = MainThreadMarker::from(self);
             let mut st = self.ivars().state.borrow_mut();
+            let was_paused = st.blink.is_paused();
             st.blink.pause_for(Duration::from_secs(15 * 60));
-            if let Some(tray) = &st.tray {
-                tray.set_paused(MainThreadMarker::from(self), true);
+            let now_paused = st.blink.is_paused();
+            if now_paused != was_paused {
+                st.sync_pause_ui(mtm);
             }
         }
 
         #[unsafe(method(resume:))]
         fn resume(&self, _sender: Option<&AnyObject>) {
+            let mtm = MainThreadMarker::from(self);
             let mut st = self.ivars().state.borrow_mut();
+            let was_paused = st.blink.is_paused();
             st.blink.resume();
-            if let Some(tray) = &st.tray {
-                tray.set_paused(MainThreadMarker::from(self), false);
+            let now_paused = st.blink.is_paused();
+            if now_paused != was_paused {
+                st.sync_pause_ui(mtm);
             }
         }
 
         #[unsafe(method(toggleBlink:))]
         fn toggle_blink(&self, _sender: Option<&AnyObject>) {
+            let mtm = MainThreadMarker::from(self);
             let mut st = self.ivars().state.borrow_mut();
             let on = !st.settings.blink.enabled;
             st.settings.blink.enabled = on;
@@ -203,6 +287,7 @@ define_class!(
             if let Some(tray) = &st.tray {
                 tray.set_blink_enabled(on);
             }
+            st.sync_pause_ui(mtm);
         }
 
         #[unsafe(method(toggleBreak:))]
@@ -221,9 +306,15 @@ define_class!(
         fn toggle_login(&self, _sender: Option<&AnyObject>) {
             let mut st = self.ivars().state.borrow_mut();
             let on = !st.settings.behaviour.start_at_login;
-            if autostart::set_enabled(on).is_ok() {
-                st.settings.behaviour.start_at_login = on;
-                st.persist();
+            match autostart::set_enabled(on) {
+                Ok(()) => {
+                    st.settings.behaviour.start_at_login = on;
+                    st.persist();
+                    st.sync_login_ui();
+                }
+                Err(e) => {
+                    eprintln!("Blink! start-at-login failed: {e}");
+                }
             }
         }
 
@@ -235,17 +326,19 @@ define_class!(
 
         #[unsafe(method(blinkDue:))]
         fn blink_due(&self, _timer: Option<&AnyObject>) {
+            let mtm = MainThreadMarker::from(self);
             let mut st = self.ivars().state.borrow_mut();
-            if st.blink.due_in_ms() == Some(0) && st.blink.on_timer_due() {
+            if st.blink.poll_due() {
                 st.show_cue();
             }
+            st.sync_pause_ui(mtm);
         }
 
         #[unsafe(method(breakDue:))]
         fn break_due(&self, _timer: Option<&AnyObject>) {
             let mtm = MainThreadMarker::from(self);
             let mut st = self.ivars().state.borrow_mut();
-            if st.eye_break.due_in_ms() == Some(0) && st.eye_break.on_timer_due() {
+            if st.eye_break.poll_due() {
                 st.show_break(mtm);
             }
         }
@@ -257,8 +350,12 @@ define_class!(
 
         #[unsafe(method(bannerTick:))]
         fn banner_tick(&self, _timer: Option<&AnyObject>) {
-            let mtm = MainThreadMarker::from(self);
-            self.ivars().state.borrow_mut().banner.tick(mtm);
+            self.ivars().state.borrow_mut().banner_tick();
+        }
+
+        #[unsafe(method(bannerClicked:))]
+        fn banner_clicked(&self, _event: Option<&AnyObject>) {
+            self.ivars().state.borrow_mut().banner_clicked(_event);
         }
 
         #[unsafe(method(screensChanged:))]
@@ -292,10 +389,11 @@ pub fn run() {
         let tray = Tray::new(mtm, &target);
         tray.set_blink_enabled(st.settings.blink.enabled);
         tray.set_break_enabled(st.settings.eye_break.enabled);
+        tray.set_login_enabled(st.settings.behaviour.start_at_login);
+        st.sync_pause_ui(mtm);
         st.tray = Some(tray);
 
-        // Repeating timers: blink poll 1s (scheduler decides), frames 30fps, banner 200ms.
-        // ponytail: 1s poll instead of one-shot re-arm; interval is 7.5s+ so 1s is fine.
+        // Repeating 1s schedulers only. High-frequency timers are started on demand.
         let blink_timer = unsafe {
             NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
                 1.0,
@@ -314,29 +412,20 @@ pub fn run() {
                 true,
             )
         };
-        let frame = unsafe {
-            NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
-                1.0 / 30.0,
-                &target,
-                sel!(frameTick:),
-                None,
-                true,
-            )
-        };
-        let banner = unsafe {
-            NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
-                0.2,
-                &target,
-                sel!(bannerTick:),
-                None,
-                true,
-            )
-        };
         st.blink_timer = Some(blink_timer);
         st.break_timer_obj = Some(break_t);
-        st.frame_timer = Some(frame);
-        st.banner_timer = Some(banner);
         st.target = Some(target.clone());
+
+        unsafe {
+            let center = NSNotificationCenter::defaultCenter();
+            let name = NSApplicationDidChangeScreenParametersNotification;
+            center.addObserver_selector_name_object(
+                &target,
+                sel!(screensChanged:),
+                Some(name),
+                None,
+            );
+        }
     }
 
     // Keep target alive for the process lifetime.

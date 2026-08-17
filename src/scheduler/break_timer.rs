@@ -8,6 +8,3 @@ pub const DEFAULT_DURATION_SECS: u32 = 20;
 
 pub const MESSAGE: &str = "Look at something far away";
 pub const SECONDARY_MESSAGE: &str = "Around 6 m / 20 ft if practical";
-
-pub const INTERVAL_PRESETS_MIN: [u32; 6] = [10, 15, 20, 30, 45, 60];
-pub const DURATION_PRESETS_SEC: [u32; 4] = [10, 20, 30, 60];

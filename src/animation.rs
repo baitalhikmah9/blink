@@ -25,12 +25,13 @@ impl Default for DoubleEdgePulse {
 
 impl DoubleEdgePulse {
     pub fn from_total_duration(total_ms: u32, gap_ms: u32) -> Self {
+        let total_ms = total_ms.max(300);
         let gap_ms = gap_ms.min(total_ms.saturating_sub(100));
         let pulse_len = total_ms.saturating_sub(gap_ms) / 2;
-        let half = (pulse_len / 2).max(1);
+        let half = (pulse_len / 2).max(1).min(pulse_len.max(1));
         Self {
             fade_in_ms: half,
-            fade_out_ms: pulse_len - half,
+            fade_out_ms: pulse_len.saturating_sub(half),
             gap_ms,
         }
     }
@@ -78,5 +79,12 @@ mod tests {
         let a = DoubleEdgePulse::default();
         assert_eq!(a.opacity_at(a.total_duration_ms()), 0.0);
         assert!(a.opacity_at(a.fade_in_ms) > 0.9);
+    }
+
+    #[test]
+    fn tiny_total_does_not_underflow() {
+        let a = DoubleEdgePulse::from_total_duration(0, 200);
+        assert!(a.total_duration_ms() >= 300);
+        assert_eq!(a.opacity_at(a.total_duration_ms()), 0.0);
     }
 }

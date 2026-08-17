@@ -1,6 +1,4 @@
 pub mod blink;
 pub mod break_timer;
 
-pub use blink::{
-    IntervalScheduler, Jitter, Preset, SchedulerConfig, MAX_INTERVAL_SECS, MIN_INTERVAL_SECS,
-};
+pub use blink::{IntervalScheduler, Jitter, SchedulerConfig, MAX_INTERVAL_SECS, MIN_INTERVAL_SECS};

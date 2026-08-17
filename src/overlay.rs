@@ -3,8 +3,8 @@
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSScreen, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
-    NSMainMenuWindowLevel,
+    NSBackingStoreType, NSColor, NSMainMenuWindowLevel, NSScreen, NSWindow,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
@@ -24,21 +24,29 @@ pub struct OverlaySet {
     color: (u8, u8, u8),
     intensity: f64,
     thickness: f64,
+    visible: bool,
 }
 
 impl OverlaySet {
-    pub fn new(mtm: MainThreadMarker, color: (u8, u8, u8), intensity: u8, thickness_px: i32) -> Self {
+    pub fn new(
+        mtm: MainThreadMarker,
+        color: (u8, u8, u8),
+        intensity: u8,
+        thickness_px: i32,
+    ) -> Self {
         let mut set = Self {
             edges: Vec::new(),
             color,
-            intensity: intensity as f64 / 255.0,
+            intensity: intensity.clamp(0, 255) as f64 / 255.0,
             thickness: thickness_px.max(8) as f64,
+            visible: false,
         };
         set.rebuild(mtm);
         set
     }
 
     pub fn rebuild(&mut self, mtm: MainThreadMarker) {
+        self.visible = false;
         for ew in self.edges.drain(..) {
             ew.window.orderOut(None);
             ew.window.close();
@@ -55,32 +63,21 @@ impl OverlaySet {
         self.set_opacity(0.0);
     }
 
-    pub fn set_appearance(
-        &mut self,
-        mtm: MainThreadMarker,
-        color: (u8, u8, u8),
-        intensity: u8,
-        thickness_px: i32,
-    ) {
-        self.color = color;
-        self.intensity = intensity as f64 / 255.0;
-        self.thickness = thickness_px.max(8) as f64;
-        self.rebuild(mtm);
-    }
-
-    pub fn set_opacity(&self, opacity: f32) {
-        let alpha = (opacity as f64) * self.intensity;
+    pub fn set_opacity(&mut self, opacity: f32) {
+        let alpha = (opacity as f64).clamp(0.0, 1.0) * self.intensity;
+        let want_visible = alpha > 0.001;
         for ew in &self.edges {
             ew.window.setAlphaValue(alpha);
-            if alpha > 0.001 {
+            if want_visible && !self.visible {
                 ew.window.orderFrontRegardless();
-            } else {
+            } else if !want_visible && self.visible {
                 ew.window.orderOut(None);
             }
         }
+        self.visible = want_visible;
     }
 
-    pub fn hide(&self) {
+    pub fn hide(&mut self) {
         self.set_opacity(0.0);
     }
 }
@@ -99,8 +96,18 @@ fn make_edge_window(
             screen.size.width,
             thickness,
         ),
-        Edge::Bottom => (screen.origin.x, screen.origin.y, screen.size.width, thickness),
-        Edge::Left => (screen.origin.x, screen.origin.y, thickness, screen.size.height),
+        Edge::Bottom => (
+            screen.origin.x,
+            screen.origin.y,
+            screen.size.width,
+            thickness,
+        ),
+        Edge::Left => (
+            screen.origin.x,
+            screen.origin.y,
+            thickness,
+            screen.size.height,
+        ),
         Edge::Right => (
             screen.origin.x + screen.size.width - thickness,
             screen.origin.y,
@@ -135,7 +142,9 @@ fn make_edge_window(
     window.setCollectionBehavior(
         NSWindowCollectionBehavior::CanJoinAllSpaces
             | NSWindowCollectionBehavior::Stationary
-            | NSWindowCollectionBehavior::IgnoresCycle,
+            | NSWindowCollectionBehavior::IgnoresCycle
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::FullScreenDisallowsTiling,
     );
     window.setHasShadow(false);
     window.setHidesOnDeactivate(false);

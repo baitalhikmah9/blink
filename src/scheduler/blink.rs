@@ -27,28 +27,6 @@ impl Jitter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Preset {
-    Minimal,
-    Balanced,
-    Frequent,
-    Strong,
-    ResearchStyle,
-}
-
-impl Preset {
-    pub fn interval(self) -> Duration {
-        let secs_f: f32 = match self {
-            Preset::Minimal => 60.0,
-            Preset::Balanced => 30.0,
-            Preset::Frequent => 20.0,
-            Preset::Strong => 15.0,
-            Preset::ResearchStyle => 7.5,
-        };
-        Duration::from_millis((secs_f * 1000.0) as u64)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
 pub struct SchedulerConfig {
     pub enabled: bool,
     pub base_interval: Duration,
@@ -59,7 +37,7 @@ impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            base_interval: Preset::Balanced.interval(),
+            base_interval: Duration::from_secs(30),
             jitter: Jitter::Pct10,
         }
     }
@@ -99,33 +77,14 @@ impl IntervalScheduler {
         scheduler
     }
 
-    pub fn is_enabled(&self) -> bool {
-        self.config.enabled
-    }
-
     pub fn is_paused(&self) -> bool {
         self.state == State::Paused
-    }
-
-    pub fn config(&self) -> &SchedulerConfig {
-        &self.config
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
         self.config.enabled = enabled;
         self.paused_until = None;
         self.apply_enabled();
-    }
-
-    pub fn set_base_interval(&mut self, interval: Duration) {
-        self.config.base_interval = interval.clamp(self.min_interval, self.max_interval);
-        if self.state == State::Waiting {
-            self.reset_timer_from_now();
-        }
-    }
-
-    pub fn set_jitter(&mut self, jitter: Jitter) {
-        self.config.jitter = jitter;
     }
 
     pub fn pause_for(&mut self, duration: Duration) {
@@ -146,32 +105,26 @@ impl IntervalScheduler {
         self.reset_timer_from_now();
     }
 
-    pub fn due_in_ms(&self) -> Option<u32> {
-        let target = match self.state {
-            State::Disabled => return None,
-            State::Waiting => self.next_fire?,
-            State::Paused => self.paused_until?,
-        };
-        let now = Instant::now();
-        Some(if target > now {
-            (target - now).as_millis().min(u32::MAX as u128) as u32
-        } else {
-            0
-        })
-    }
-
-    pub fn on_timer_due(&mut self) -> bool {
+    /// Atomic poll. Returns true only when the waiting timer has fired.
+    /// Handles pause expiry internally. Callers cannot fire early.
+    pub fn poll_due(&mut self) -> bool {
         match self.state {
             State::Disabled => false,
             State::Paused => {
-                self.paused_until = None;
-                self.state = State::Waiting;
-                self.reset_timer_from_now();
+                if self.paused_until.is_some_and(|t| Instant::now() >= t) {
+                    self.paused_until = None;
+                    self.state = State::Waiting;
+                    self.reset_timer_from_now();
+                }
                 false
             }
             State::Waiting => {
-                self.reset_timer_from_now();
-                true
+                if self.next_fire.is_some_and(|t| Instant::now() >= t) {
+                    self.reset_timer_from_now();
+                    true
+                } else {
+                    false
+                }
             }
         }
     }
@@ -200,13 +153,13 @@ impl IntervalScheduler {
         let base = self.config.base_interval;
         let frac = self.config.jitter.fraction();
         if frac <= 0.0 {
-            return base;
+            return base.clamp(self.min_interval, self.max_interval);
         }
         let base_ms = base.as_millis() as i64;
         let max_delta = ((base_ms as f32) * frac) as i64;
         let delta = self.next_rand_range(-max_delta, max_delta);
         let jittered_ms = (base_ms + delta).max(1000);
-        Duration::from_millis(jittered_ms as u64)
+        Duration::from_millis(jittered_ms as u64).clamp(self.min_interval, self.max_interval)
     }
 
     fn next_rand_range(&mut self, min: i64, max: i64) -> i64 {
@@ -251,20 +204,63 @@ mod tests {
     }
 
     #[test]
-    fn fires_and_reschedules() {
+    fn poll_only_fires_once_per_interval() {
         let mut s = new_scheduler(SchedulerConfig {
             enabled: true,
             base_interval: Duration::from_secs(30),
             jitter: Jitter::Off,
         });
-        assert!(s.on_timer_due());
-        assert!(s.due_in_ms().unwrap() > 25_000);
+        s.next_fire = Some(Instant::now() - Duration::from_millis(1));
+        assert!(s.poll_due());
+        assert!(!s.poll_due());
+    }
+
+    #[test]
+    fn pause_expires_without_firing() {
+        let mut s = new_scheduler(SchedulerConfig {
+            enabled: true,
+            base_interval: Duration::from_secs(30),
+            jitter: Jitter::Off,
+        });
+        s.state = State::Paused;
+        s.paused_until = Some(Instant::now() - Duration::from_millis(1));
+        assert!(!s.poll_due());
+        assert!(!s.is_paused());
     }
 
     #[test]
     fn pause_does_not_fire() {
         let mut s = new_scheduler(SchedulerConfig::default());
-        s.pause_for(Duration::from_millis(0));
-        assert!(!s.on_timer_due());
+        s.state = State::Paused;
+        s.paused_until = Some(Instant::now() + Duration::from_secs(60));
+        assert!(!s.poll_due());
+    }
+
+    #[test]
+    fn disabled_poll_returns_false() {
+        let mut s = new_scheduler(SchedulerConfig {
+            enabled: false,
+            base_interval: Duration::from_secs(30),
+            jitter: Jitter::Off,
+        });
+        assert!(!s.poll_due());
+        s.set_enabled(true);
+        assert!(!s.poll_due());
+    }
+
+    #[test]
+    fn jittered_interval_is_clamped() {
+        let mut s = new_scheduler(SchedulerConfig {
+            enabled: true,
+            base_interval: Duration::from_secs(MAX_INTERVAL_SECS),
+            jitter: Jitter::Pct20,
+        });
+        s.next_fire = Some(Instant::now() - Duration::from_millis(1));
+        assert!(s.poll_due());
+        let before = Instant::now();
+        let after = Instant::now();
+        let next = s.next_fire.unwrap();
+        assert!(next >= before + s.min_interval);
+        assert!(next <= after + s.max_interval);
     }
 }
