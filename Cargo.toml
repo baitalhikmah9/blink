@@ -1,0 +1,57 @@
+[package]
+name = "blinkcue"
+version = "0.1.0"
+edition = "2021"
+description = "Ambient blink-conditioning and eye-break reminders (macOS)"
+license = "MIT"
+
+[[bin]]
+name = "blinkcue"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3.2", features = [
+    "NSArray",
+    "NSGeometry",
+    "NSString",
+    "NSTimer",
+    "NSObject",
+    "NSValue",
+] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "objc2-core-foundation",
+    "NSApplication",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSStatusBarButton",
+    "NSMenu",
+    "NSMenuItem",
+    "NSWindow",
+    "NSView",
+    "NSColor",
+    "NSScreen",
+    "NSGraphics",
+    "NSResponder",
+    "NSEvent",
+    "NSFont",
+    "NSText",
+    "NSTextField",
+    "NSControl",
+    "NSCell",
+    "NSButton",
+    "NSRunningApplication",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "CGEvent",
+    "CGEventTypes",
+    "CGEventSource",
+] }
