@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-const LABEL: &str = "com.blinkcue.app";
+const LABEL: &str = "com.blink.app";
 
 fn agent_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;

@@ -1,4 +1,4 @@
-//! BlinkCue for macOS: menu-bar blink cue + 20-20-20 reminder.
+//! Blink! for macOS: menu-bar blink cue + 20-20-20 reminder.
 
 mod animation;
 mod app;

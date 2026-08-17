@@ -1,12 +1,12 @@
 [package]
-name = "blinkcue"
+name = "blink"
 version = "0.1.0"
 edition = "2021"
-description = "Ambient blink-conditioning and eye-break reminders (macOS)"
+description = "Blink! ambient blink-conditioning and eye-break reminders (macOS)"
 license = "MIT"
 
 [[bin]]
-name = "blinkcue"
+name = "blink"
 path = "src/main.rs"
 
 [profile.release]

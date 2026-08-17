@@ -1,4 +1,4 @@
-# BlinkCue
+# Blink!
 
 Ambient blink cue and 20-20-20 eye-break reminder. A tiny peripheral pulse, not a notification app: no text on the glow, no sound, no focus steal.
 
@@ -16,14 +16,14 @@ Default: blink glow every ~30s (10% jitter), eye-break banner every 20 minutes.
 **Release binary (Apple Silicon):**
 
 1. Open the latest GitHub Release.
-2. Download `blinkcue-macos-aarch64`.
+2. Download `blink-macos-aarch64`.
 3. In Terminal:
 
 ```bash
-chmod +x ~/Downloads/blinkcue-macos-aarch64
-xattr -dr com.apple.quarantine ~/Downloads/blinkcue-macos-aarch64
-mv ~/Downloads/blinkcue-macos-aarch64 /usr/local/bin/blinkcue
-blinkcue
+chmod +x ~/Downloads/blink-macos-aarch64
+xattr -dr com.apple.quarantine ~/Downloads/blink-macos-aarch64
+mv ~/Downloads/blink-macos-aarch64 /usr/local/bin/blink
+blink
 ```
 
 Look for **◉** in the menu bar.
@@ -31,18 +31,18 @@ Look for **◉** in the menu bar.
 **From source:**
 
 ```bash
-git clone https://github.com/baitalhikmah9/blinkcue.git
-cd blinkcue
+git clone https://github.com/baitalhikmah9/blink.git
+cd blink
 cargo run --release
 ```
 
 Needs a recent stable Rust (`rustup`). macOS only for this tree.
 
-**Start at login:** menu bar → Start at login (writes `~/Library/LaunchAgents/com.blinkcue.app.plist`).
+**Start at login:** menu bar → Start at login (writes `~/Library/LaunchAgents/com.blink.app.plist`).
 
-**Quit:** menu bar → Quit BlinkCue.
+**Quit:** menu bar → Quit Blink!
 
-**Settings file:** `~/Library/Application Support/BlinkCue/settings.json`
+**Settings file:** `~/Library/Application Support/Blink/settings.json`
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -61,7 +61,7 @@ Edit the JSON, then quit and relaunch. The menu bar toggles blink / eye-break / 
 
 ### Windows
 
-The original BlinkCue is a **Win32** app (no Electron). This public checkout is the **macOS port**; it will not `cargo build` on Windows.
+The original Blink! is a **Win32** app (no Electron). This public checkout is the **macOS port**; it will not `cargo build` on Windows.
 
 If you have the original Win32 tree (Drive dump / older zip):
 
@@ -70,14 +70,14 @@ rustup toolchain install stable-x86_64-pc-windows-gnu
 rustup default stable-x86_64-pc-windows-gnu
 # mingw-w64 gcc on PATH (WinLibs, or: winget install BrechtSanders.WinLibs.POSIX.UCRT)
 cargo build --release
-.\target\release\blinkcue.exe
+.\target\release\blink.exe
 ```
 
 MSVC (`x86_64-pc-windows-msvc`) also works. The GNU linker corrupts the embedded DPI manifest; the Win32 `main` calls `SetProcessDpiAwarenessContext` instead.
 
-No installer. Copy `blinkcue.exe` anywhere and run it. Tray icon: left-click Settings, right-click pause / cue / quit.
+No installer. Copy `blink.exe` anywhere and run it. Tray icon: left-click Settings, right-click pause / cue / quit.
 
-Windows settings path: `%LOCALAPPDATA%\BlinkCue\settings.json`
+Windows settings path: `%LOCALAPPDATA%\Blink\settings.json`
 
 A Windows release asset will be added when that tree is published here.
 
@@ -103,7 +103,7 @@ Read this before editing.
 
 **What this repo is**
 
-- Rust 2021 binary crate `blinkcue`, MIT.
+- Product name: **Blink!** Crate/binary: `blink`. MIT.
 - **Host is macOS.** `Cargo.toml` depends on `objc2` / AppKit / CoreGraphics. Do not add the `windows` crate here unless you are restoring the Win32 tree as a separate target.
 - No network. No analytics. No extra runtime.
 
@@ -127,7 +127,7 @@ src/settings/            JSON model + atomic save
 ```bash
 cargo test            # scheduler / animation / settings JSON
 cargo run --release   # menu-bar app
-cargo build --release # target/release/blinkcue
+cargo build --release # target/release/blink
 ```
 
 Do not commit `target/`. Do not add Electron, a webview, or a settings GUI unless asked. Interval/color changes go in `settings.json` or `src/settings/model.rs` defaults.
@@ -138,8 +138,8 @@ Do not commit `target/`. Do not add Electron, a webview, or a settings GUI unles
 - Scheduler is timing-only. Idle checks happen at fire time, not on their own timer.
 - Overlay windows: borderless, `ignoresMouseEvents`, `CanJoinAllSpaces`, hidden at rest (`alpha = 0`).
 - Blink poll is 1s and only fires when `due_in_ms() == Some(0)`. Do not call `on_timer_due()` on every tick.
-- Login item path: `~/Library/LaunchAgents/com.blinkcue.app.plist`, label `com.blinkcue.app`.
-- Config dir: `~/Library/Application Support/BlinkCue/`. Writes are temp + `sync_all` + rename.
+- Login item path: `~/Library/LaunchAgents/com.blink.app.plist`, label `com.blink.app`.
+- Config dir: `~/Library/Application Support/Blink/`. Writes are temp + `sync_all` + rename.
 
 **Do not**
 
@@ -163,7 +163,7 @@ cargo build --release
 |---|---|---|
 | Toolchain | `stable-aarch64-apple-darwin` (or x86_64 Darwin) | `stable-x86_64-pc-windows-gnu` or `-msvc` |
 | Extra | Xcode CLT / macOS SDK | MinGW-w64 **or** MSVC Build Tools |
-| Output | `target/release/blinkcue` | `target/release/blinkcue.exe` |
+| Output | `target/release/blink` | `target/release/blink.exe` |
 | Size | ~400 KB | ~440 KB |
 
 ```bash

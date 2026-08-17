@@ -17,7 +17,7 @@ struct StoredFile {
 
 pub fn config_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join("Library/Application Support/BlinkCue"))
+    Some(PathBuf::from(home).join("Library/Application Support/Blink"))
 }
 
 fn config_path() -> Option<PathBuf> {

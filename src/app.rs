@@ -157,7 +157,7 @@ pub struct AppIvars {
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "BlinkCueAppTarget"]
+    #[name = "BlinkAppTarget"]
     #[ivars = AppIvars]
     pub struct AppTarget;
 

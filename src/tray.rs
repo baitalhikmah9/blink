@@ -21,7 +21,7 @@ impl Tray {
         let item = bar.statusItemWithLength(NSVariableStatusItemLength);
         if let Some(button) = item.button(mtm) {
             button.setTitle(&NSString::from_str("◉"));
-            button.setToolTip(Some(&NSString::from_str("BlinkCue")));
+            button.setToolTip(Some(&NSString::from_str("Blink!")));
         }
 
         let menu = NSMenu::new(mtm);
@@ -46,7 +46,7 @@ impl Tray {
         menu.addItem(&brk);
         menu.addItem(&login);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
-        menu.addItem(&item_with(mtm, "Quit BlinkCue", sel!(quit:), target));
+        menu.addItem(&item_with(mtm, "Quit Blink!", sel!(quit:), target));
 
         item.setMenu(Some(&menu));
 
