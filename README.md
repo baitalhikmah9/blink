@@ -2,8 +2,9 @@
 
 Ambient blink cue and 20-20-20 eye-break reminder. A tiny peripheral pulse, not a notification app: no text on the glow, no sound, no focus steal.
 
-- **macOS (this repo):** native AppKit menu-bar app (`objc2`).
 - **Windows (original):** native Win32 (`windows` crate), single portable `.exe`.
+- **macOS (this repo):** native AppKit menu-bar app (`objc2`).
+- **Linux:** not shipped (no backend in this tree).
 
 Default: blink glow every ~30s (10% jitter), eye-break banner every 20 minutes.
 
@@ -80,6 +81,10 @@ No installer. Copy `blink.exe` anywhere and run it. Tray icon: left-click Settin
 Windows settings path: `%LOCALAPPDATA%\Blink\settings.json`
 
 A Windows release asset will be added when that tree is published here.
+
+### Linux
+
+Not shipped. This tree has no Linux UI backend. Do not expect `cargo run` to produce a tray app on Linux.
 
 ---
 
